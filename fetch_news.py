@@ -28,7 +28,6 @@ def get_jin10_flash_news():
         raw_news = data.get("data", [])
         
         news_list = []
-        # 获取今天的日期，格式如 2026-06-29
         current_date = datetime.now().strftime("%Y-%m-%d")
         
         for item in raw_news:
@@ -39,10 +38,9 @@ def get_jin10_flash_news():
                 if not clean_content:
                     continue
                 
-                # 生成唯一特征标识（MD5），写入 data-id 用于绝对去重
+                # 生成唯一特征标识（MD5）
                 news_id = hashlib.md5(clean_content.encode("utf-8")).hexdigest()
                 
-                # 提取快讯的具体具体时分秒
                 full_time = item.get("time", "")
                 time_part = full_time.split(" ")[1] if " " in full_time else full_time
                 
@@ -91,11 +89,12 @@ def update_html_page():
         print("错误：HTML 中未找到定位注释标签！")
         return
 
-    # 完美对齐：从你的现有页面提取所有的 article.card 的 data-id
+    # 1. 使用 BeautifulSoup 精准解析页面中现有的旧卡片
     soup = BeautifulSoup(html_content, "html.parser")
-    existing_ids = [card.get("data-id") for card in soup.find_all("article", class_="card") if card.get("data-id")]
+    existing_cards = soup.find_all("article", class_="card")
+    existing_ids = [card.get("data-id") for card in existing_cards if card.get("data-id")]
 
-    # 过滤重复新闻
+    # 2. 过滤并生成全新卡片
     new_cards_html = []
     new_added_count = 0
     for news in reversed(latest_news):
@@ -103,34 +102,28 @@ def update_html_page():
             new_cards_html.append(generate_news_card_html(news))
             new_added_count += 1
 
-    if new_added_count == 0:
+    # 3. 如果完全没有新新闻，且页面现在是空的，我们也强制刷新一次注入初始数据
+    if new_added_count == 0 and len(existing_cards) > 0:
         print("没有检测到新发布的新闻，无需更新网页。")
         return
 
-    print(f"检测到 {new_added_count} 条全新的金十快讯，正在写入...")
+    print(f"正在整理并写入快讯...")
 
-    # 切割并提取现有的老卡片
-    parts_start = html_content.split(start_tag)
-    before_news = parts_start[0]
-    rest = parts_start[1]
+    # 4. 提取现有的旧卡片文本
+    old_cards_str = [str(card) for card in existing_cards]
     
-    parts_end = rest.split(end_tag)
-    news_section = parts_end[0]
-    after_news = parts_end[1]
-    
-    old_soup = BeautifulSoup(news_section, "html.parser")
-    # 提取旧卡片
-    old_cards = []
-    for card in old_soup.find_all("article", class_="card"):
-        old_cards.append(str(card))
-    
-    # 崭新快讯塞在最上面 + 合并旧卡片，严格裁剪数量
-    all_cards = new_cards_html + old_cards
+    # 5. 合并并严格裁剪
+    all_cards = new_cards_html + old_cards_str
     all_cards = all_cards[:MAX_NEWS_COUNT]
 
-    # 重新拼装写回
+    # 6. 【核心修复】不使用危险的 split，直接使用标准的标记替换法
+    # 找到旧标记之间的所有内容，并用新内容替换
+    start_idx = html_content.find(start_tag) + len(start_tag)
+    end_idx = html_content.find(end_tag)
+    
     updated_section = "\n" + "\n".join(all_cards) + "\n        "
-    new_html = f"{before_news}{start_tag}{updated_section}{end_tag}{after_news}"
+    
+    new_html = html_content[:start_idx] + updated_section + html_content[end_idx:]
 
     with open(HTML_FILE_PATH, "w", encoding="utf-8") as f:
         f.write(new_html)
