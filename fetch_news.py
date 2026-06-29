@@ -1,79 +1,140 @@
 import os
-import re
+import hashlib
+import json
+import time
 from datetime import datetime
-import xml.etree.ElementTree as ET
 import requests
+from bs4 import BeautifulSoup
 
-def get_latest_news():
-    """从免费的 RSS 源抓取最新的加密与世界大事"""
-    # 这里使用的是 CoinDesk 的免费 RSS 新闻源，不需要任何 Token 或 Key
-    url = "https://coindesk.com"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+# 配置项
+HTML_FILE_PATH = "index.html"  # 你的HTML文件路径
+MAX_NEWS_COUNT = 10           # 页面最多保留的新闻条数
+
+def get_jin10_flash_news():
+    """从金十数据接口抓取最新的快讯"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://jin10.com"
+    }
+    url = f"https://jin10.com{int(time.time() * 1000)}"
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            root = ET.fromstring(response.content)
-            items = root.findall('.//item')
-            
-            if items:
-                # 拿取最新的一条新闻
-                latest_item = items[0]
-                title = latest_item.find('title').text
-                description = latest_item.find('description').text if latest_item.find('description') is not None else ""
-                
-                # 清洗一下描述文本中的 HTML 标签
-                description = re.sub('<[^<]+?>', '', description)
-                # 截取前 200 个字防止过长
-                if len(description) > 200:
-                    description = description[:200] + "..."
-                    
-                return title, description
-    except Exception as e:
-        print(f"Error fetching news: {e}")
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            print(f"请求失败，状态码: {response.status_code}")
+            return []
         
-    # 如果抓取失败，使用兜底的优质模版内容，确保网站天天有更新
-    return "Global Crypto Markets Maintain Steady Growth Amid Regulatory Clarity", "Institutional inflows continue to support major assets as cross-border payment solutions expand globally. Developers focus on scalability enhancements."
+        data = response.json()
+        raw_news = data.get("data", [])
+        
+        news_list = []
+        # 获取今天的日期，格式如 2026-06-29
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        
+        for item in raw_news:
+            if item.get("type") == 0:  # 纯文字快讯
+                soup = BeautifulSoup(item.get("data", {}).get("content", ""), "html.parser")
+                clean_content = soup.get_text().strip()
+                
+                if not clean_content:
+                    continue
+                
+                # 生成唯一特征标识（MD5），写入 data-id 用于绝对去重
+                news_id = hashlib.md5(clean_content.encode("utf-8")).hexdigest()
+                
+                # 提取快讯的具体具体时分秒
+                full_time = item.get("time", "")
+                time_part = full_time.split(" ")[1] if " " in full_time else full_time
+                
+                news_list.append({
+                    "id": news_id,
+                    "date": current_date,
+                    "time": time_part,
+                    "content": clean_content
+                })
+        return news_list
+    except Exception as e:
+        print(f"抓取金十数据出错: {e}")
+        return []
 
-def update_html():
-    # 1. 获取今天的时间与新闻内容
-    today_str = datetime.utcnow().strftime('%Y-%m-%d')
-    title, summary = get_latest_news()
-    
-    # 2. 组装成我们网页的 HTML 卡片格式
-    new_card = f"""        <!-- 文章盒子开始 -->
-        <article class="card">
+def generate_news_card_html(news):
+    """完美对齐你的暗黑科技风 HTML 结构"""
+    return f"""        <article class="card" data-id="{news['id']}">
             <div class="meta">
-                <span class="date">{today_str}</span>
-                <span class="tag">Auto Pulse</span>
+                <span class="date">{news['date']} {news['time']}</span>
+                <span class="tag">Jin10 Flash</span>
             </div>
-            <h2 class="title">{title}</h2>
+            <h2 class="title">金十财经实时快讯追踪</h2>
             <div class="content">
-                <p>{summary}</p>
-                <p>💡 <em>Brief: Automatically tracked from global channels. Domain index actively maintained.</em></p>
+                <p>{news['content']}</p>
+                <p>💡 <em>Brief: 自动化系统实时追踪，防重复特征已锁定。</em></p>
             </div>
-        </article>
-        <!-- 文章盒子结束 -->\n"""
+        </article>"""
 
-    # 3. 读取原本的 index.html 并精准插入
-    if not os.path.exists("index.html"):
-        print("index.html not found!")
+def update_html_page():
+    latest_news = get_jin10_flash_news()
+    if not latest_news:
+        print("未获取到有效新闻，取消更新。")
         return
 
-    with open("index.html", "r", encoding="utf-8") as f:
+    if not os.path.exists(HTML_FILE_PATH):
+        print(f"未找到目标文件 {HTML_FILE_PATH}")
+        return
+        
+    with open(HTML_FILE_PATH, "r", encoding="utf-8") as f:
         html_content = f.read()
 
     start_tag = "<!-- AUTOMATIC_POSTS_START -->"
+    end_tag = "<!-- AUTOMATIC_POSTS_END -->"
     
-    if start_tag in html_content:
-        # 在标记符号下方紧接着插入新文章，这样最新的文章永远排在最上面
-        updated_content = html_content.replace(start_tag, f"{start_tag}\n{new_card}")
-        
-        with open("index.html", "w", encoding="utf-8") as f:
-            f.write(updated_content)
-        print("Successfully updated index.html with daily news!")
-    else:
-        print("Could not find insertion tags in index.html")
+    if start_tag not in html_content or end_tag not in html_content:
+        print("错误：HTML 中未找到定位注释标签！")
+        return
+
+    # 完美对齐：从你的现有页面提取所有的 article.card 的 data-id
+    soup = BeautifulSoup(html_content, "html.parser")
+    existing_ids = [card.get("data-id") for card in soup.find_all("article", class_="card") if card.get("data-id")]
+
+    # 过滤重复新闻
+    new_cards_html = []
+    new_added_count = 0
+    for news in reversed(latest_news):
+        if news["id"] not in existing_ids:
+            new_cards_html.append(generate_news_card_html(news))
+            new_added_count += 1
+
+    if new_added_count == 0:
+        print("没有检测到新发布的新闻，无需更新网页。")
+        return
+
+    print(f"检测到 {new_added_count} 条全新的金十快讯，正在写入...")
+
+    # 切割并提取现有的老卡片
+    parts_start = html_content.split(start_tag)
+    before_news = parts_start[0]
+    rest = parts_start[1]
+    
+    parts_end = rest.split(end_tag)
+    news_section = parts_end[0]
+    after_news = parts_end[1]
+    
+    old_soup = BeautifulSoup(news_section, "html.parser")
+    # 提取旧卡片
+    old_cards = []
+    for card in old_soup.find_all("article", class_="card"):
+        old_cards.append(str(card))
+    
+    # 崭新快讯塞在最上面 + 合并旧卡片，严格裁剪数量
+    all_cards = new_cards_html + old_cards
+    all_cards = all_cards[:MAX_NEWS_COUNT]
+
+    # 重新拼装写回
+    updated_section = "\n" + "\n".join(all_cards) + "\n        "
+    new_html = f"{before_news}{start_tag}{updated_section}{end_tag}{after_news}"
+
+    with open(HTML_FILE_PATH, "w", encoding="utf-8") as f:
+        f.write(new_html)
+    print("网页更新成功！")
 
 if __name__ == "__main__":
-    update_html()
+    update_html_page()
