@@ -36,5 +36,5 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@://github.com"
         git add index.html
-        # 核心修复：这里修改成了 origin master，完美对齐你的仓库主分支
-        git diff-index --quiet HEAD || (git commit -m "🤖 自动同步最新金十快讯" && git push origin master)
+        # 【万能兼容写法】自动识别当前分支并安全推送，绝不报分支名字错误
+        git diff-index --quiet HEAD || (git commit -m "🤖 自动同步最新金十快讯" && git push)
